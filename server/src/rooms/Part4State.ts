@@ -1,29 +1,11 @@
-import { Schema, Context, type, MapSchema } from "@colyseus/schema";
-import Phaser from "phaser";
-
-export interface InputData {
-  left: false;
-  right: false;
-  up: false;
-  down: false;
-  tick: number;
-}
+import { Schema, type, MapSchema } from "@colyseus/schema";
 
 export class Player extends Schema {
   @type("number") x: number;
   @type("number") y: number;
-
-  inputQueue: InputData[] = [];
+  @type("number") rotation: number;
 }
 
 export class MyRoomState extends Schema {
-  @type("number") mapWidth: number;
-  @type("number") mapHeight: number;
-
   @type({ map: Player }) players = new MapSchema<Player>();
-}
-
-export class Entity extends Schema {
-  @type("number") x: number;
-  @type("number") y: number;
 }

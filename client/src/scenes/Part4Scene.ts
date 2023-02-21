@@ -1,30 +1,18 @@
 import Phaser from "phaser";
-import { Room, Client } from "colyseus.js";
+import { Room, Client, SchemaSerializer } from "colyseus.js";
 import { BACKEND_URL } from "../backend";
 import type { MyRoomState } from "../../../server/src/rooms/Part4State";
+import Player from "./player";
 
 export class Part4Scene extends Phaser.Scene {
-  room: Room 
+  room: Room;
 
   currentPlayer: Phaser.Types.Physics.Arcade.ImageWithDynamicBody;
   playerEntities: {
-    [sessionId: string]: Phaser.Types.Physics.Arcade.ImageWithDynamicBody;
+    [sessionId: string]: Player;
   } = {};
 
-  debugFPS: Phaser.GameObjects.Text;
-
-  localRef: Phaser.GameObjects.Rectangle;
-  remoteRef: Phaser.GameObjects.Rectangle;
-
   cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
-
-  inputPayload = {
-    left: false,
-    right: false,
-    up: false,
-    down: false,
-    tick: undefined,
-  };
 
   constructor() {
     super({ key: "part4" });
@@ -35,54 +23,41 @@ export class Part4Scene extends Phaser.Scene {
       "ship_0001",
       "https://cdn.glitch.global/3e033dcd-d5be-4db4-99e8-086ae90969ec/ship_0001.png?v=1649945243288"
     );
+    console.log("preload");
   }
 
   async create() {
     this.cursorKeys = this.input.keyboard.createCursorKeys();
-    this.debugFPS = this.add.text(4, 4, "", { color: "#ff0000" });
     // connect with the room
     await this.connect();
-    console.log(this.room.state.players.onAdd);
-    this.room.state.players.onAdd = (player, sessionId) => {
-      const entity = this.physics.add.image(player.x, player.y, "ship_0001");
-      this.playerEntities[sessionId] = entity;
-      console.log(player, sessionId);
+
+    this.room.state.players.onAdd((player, sessionId) => {
+      // const entity = this.physics.add.image(player.x, player.y, "ship_0001");
+      // this.playerEntities[sessionId] = entity;
       // is current player
       if (sessionId === this.room.sessionId) {
-        this.currentPlayer = entity;
+        this.currentPlayer = this.physics.add.image(
+          player.x,
+          player.y,
+          "ship_0001"
+        );
 
-        this.localRef = this.add
-          .rectangle(0, 0, entity.width, entity.height)
-          .setVisible(false);
-        this.localRef.setStrokeStyle(1, 0x00ff00);
-
-        this.remoteRef = this.add
-          .rectangle(0, 0, entity.width, entity.height)
-          .setVisible(false);
-        this.remoteRef.setStrokeStyle(1, 0xff0000);
-
-        console.log(player);
-        player.player.onChange(() => {
-          this.remoteRef.x = player.x;
-          this.remoteRef.y = player.y;
-        });
+        player.onChange(() => {});
       } else {
-        // listening for server updates
-        player.onChange(() => {
-          //
-          // we're going to LERP the positions during the render loop.
-          //
-          entity.setData("serverX", player.x);
-          entity.setData("serverY", player.y);
-        });
-      }
-    };
+        const entity = new Player(this);
+        console.log(entity);
+        this.playerEntities[sessionId] = entity;
 
+        this.colyseusServer.linkSchema(entity, player);
+      }
+    });
     // remove local reference when entity is removed from the server
     this.room.state.players.onRemove((player, sessionId) => {
       const entity = this.playerEntities[sessionId];
       if (entity) {
         entity.destroy();
+
+        this.colyseusServer.unlinkSchema(entity);
         delete this.playerEntities[sessionId];
       }
     });
@@ -93,80 +68,79 @@ export class Part4Scene extends Phaser.Scene {
   }
 
   async connect() {
-    // add connection status text
-    const connectionStatusText = this.add
-      .text(0, 0, "Trying to connect with the server...")
-      .setStyle({ color: "#ff0000" })
-      .setPadding(4);
+    this.colyseusServer.createClient({
+      serverEndpoint: BACKEND_URL,
+    });
 
-    const client = new Client(BACKEND_URL);
- 
-    try {
-      this.room = await client.joinOrCreate("part4_room", {});
-
-      // connection successful!
-      connectionStatusText.destroy();
-    } catch (e) {
-      // couldn't connect
-      connectionStatusText.text = "Could not connect with the server.";
-    }
+    this.room = await this.colyseusServer.client.joinOrCreate("part4_room", {});
   }
 
   update(time: number, delta: number): void {
-    this.debugFPS.text = `Frame rate: ${this.game.loop.actualFps}`;
-
-    for (let sessionId in this.playerEntities) {
-      // interpolate all player entities
-      // (except the current player)
-      if (sessionId === this.room.sessionId) {
-        continue;
-      }
-
-      const entity = this.playerEntities[sessionId];
-      const { serverX, serverY } = entity.data.values;
-
-      entity.x = Phaser.Math.Linear(entity.x, serverX, 0.2);
-      entity.y = Phaser.Math.Linear(entity.y, serverY, 0.2);
-      this.physics.
-    }
-
     if (this.currentPlayer) {
+      const velocity = 100;
+      if (this.cursorKeys.left.isDown) {
+        this.currentPlayer.setVelocityX(-velocity);
+      } else if (this.cursorKeys.right.isDown) {
+        this.currentPlayer.setVelocityX(velocity);
+      } else this.currentPlayer.setVelocityX(0);
+
+      if (this.cursorKeys.up.isDown) {
+        this.currentPlayer.setVelocityY(-velocity);
+      } else if (this.cursorKeys.down.isDown) {
+        this.currentPlayer.setVelocityY(velocity);
+      } else this.currentPlayer.setVelocityY(0);
+
+      this.currentPlayer.setRotation(
+        Phaser.Math.Angle.RotateTo(
+          this.currentPlayer.rotation,
+          Phaser.Math.TAU + this.currentPlayer.body.velocity.angle(),
+          0.2
+        )
+      );
+
+      this.room.send(0, {
+        x: this.currentPlayer.x,
+        y: this.currentPlayer.y,
+        rotation: this.currentPlayer.rotation,
+      });
     }
+
+    // entity.x = Phaser.Math.Linear(entity.x, entity.getData("serverX"), 0.2);
   }
 
-  fixedTick(delta: number, tick: number) {
-    // console.log(delta);
-    // skip loop if not connected yet.
-    if (this.currentPlayer) {
-      this.inputPayload.left = this.cursorKeys.left.isDown;
-      this.inputPayload.right = this.cursorKeys.right.isDown;
-      this.inputPayload.up = this.cursorKeys.up.isDown;
-      this.inputPayload.down = this.cursorKeys.down.isDown;
-      this.room.send(0, this.inputPayload);
-      const velocity = 2;
-      // console.log(velocity);
+  // fixedTick(delta: number, tick: number) {
+  //   // console.log(delta);
+  //   // skip loop if not connected yet.
+  //   if (this.currentPlayer) {
+  //     this.inputPayload.left = this.cursorKeys.left.isDown;
+  //     this.inputPayload.right = this.cursorKeys.right.isDown;
+  //     this.inputPayload.up = this.cursorKeys.up.isDown;
+  //     this.inputPayload.down = this.cursorKeys.down.isDown;
+  //     this.room.send(0, this.inputPayload);
+  //     const velocity = 2;
+  //     // console.log(velocity);
 
-      if (this.inputPayload.left) {
-        this.currentPlayer.x -= velocity;
-      } else if (this.inputPayload.right) {
-        this.currentPlayer.x += velocity;
-      }
+  // if (this.inputPayload.left) {
+  //   this.currentPlayer.x -= velocity;
+  // } else if (this.inputPayload.right) {
+  //   this.currentPlayer.x += velocity;
+  // }
 
-      if (this.inputPayload.up) {
-        this.currentPlayer.y -= velocity;
-      } else if (this.inputPayload.down) {
-        this.currentPlayer.y += velocity;
-      }
+  // if (this.inputPayload.up) {
+  //   this.currentPlayer.y -= velocity;
+  // } else if (this.inputPayload.down) {
+  //   this.currentPlayer.y += velocity;
+  // }
 
-      this.localRef.x = this.currentPlayer.x;
-      this.localRef.y = this.currentPlayer.y;
-    }
-    // console.log("tick");
+  //     this.localRef.x = this.currentPlayer.x;
+  //     this.localRef.y = this.currentPlayer.y;
+  //   }
+  //   // console.log("tick");
 
-    // const currentPlayerRemote = this.room.state.players.get(
-    //   this.room.sessionId
-    // );
-    // const ticksBehind = tick - currentPlayerRemote.tick;
-    // console.log({ ticksBehind });
-  }
+  //   // const currentPlayerRemote = this.room.state.players.get(
+  //   //   this.room.sessionId
+  //   // );
+  //   // const ticksBehind = tick - currentPlayerRemote.tick;
+  //   // console.log({ ticksBehind });
+  // }
 }
