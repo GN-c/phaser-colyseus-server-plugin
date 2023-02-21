@@ -14,14 +14,18 @@ const game = new Phaser.Game({
   parent: "phaser-example",
   physics: {
     default: "arcade",
+    arcade: {
+      fixedStep: false,
+    },
+  },
+  scale: {
+    mode: Phaser.Scale.RESIZE,
   },
   pixelArt: true,
   scene: [Part4Scene],
-
   plugins: {
     scene: [ColyseusServerPlugin],
   },
-  colyseusServer: {},
 });
 
 // fpsInput.oninput = function (event: InputEvent) {
